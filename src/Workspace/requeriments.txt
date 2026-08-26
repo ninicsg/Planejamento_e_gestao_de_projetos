@@ -1,5 +1,0 @@
-pysus 
-pandas 
-pyarrow 
-numpy
-openpyxl
