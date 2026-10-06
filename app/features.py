@@ -1,0 +1,108 @@
+"""
+Engenharia de atributos compartilhada
+"""
+
+import pandas as pd
+
+# Grupos de campos da ficha do SINAN
+
+VIOLENCE_TYPES = [
+    "VIOL_FISIC", "VIOL_PSICO", "VIOL_NEGLI", "VIOL_FINAN",
+    "VIOL_SEXU", "VIOL_TORT", "VIOL_TRAF", "VIOL_LEGAL",
+]
+
+AGGRESSION_MEANS = [
+    "AG_FORCA", "AG_AMEACA", "AG_OBJETO", "AG_CORTE",
+    "AG_QUENTE", "AG_ENFOR", "AG_ENVEN", "AG_FOGO",
+]
+
+FAMILY = [
+    "REL_PAI", "REL_MAE", "REL_PAD", "REL_MAD",
+    "REL_FILHO", "REL_IRMAO", "REL_CONJ", "REL_EXCON",
+]
+
+# Coabitação provável. Ex-cônjuge fica fora por definição.
+HOUSEHOLD = ["REL_CONJ", "REL_FILHO", "REL_CUIDA"]
+
+DISABILITY = [
+    "DEF_FISICA", "DEF_MENTAL", "DEF_VISUAL", "DEF_AUDITI",
+    "TRAN_MENT", "TRAN_COMP", "DEF_OUT",
+]
+
+AGE_BINS = [60, 70, 80, 90, 120]
+AGE_LABELS = ["60-69", "70-79", "80-89", "90+"]
+
+ENGINEERED = [
+    "n_violence_types", "n_aggression_means", "family_aggressor",
+    "household_aggressor", "aggressor_identified", "has_disability",
+    "age_band",
+]
+
+# Normalização
+
+def normalize_code(value):
+    """Padroniza o código antes de comparar."""
+    if pd.isna(value):
+        return None
+    text = str(value).strip()
+    if text.endswith(".0"):
+        text = text[:-2]
+    return text or None
+
+
+def _is_yes(df, column):
+    if column not in df.columns:
+        return pd.Series(False, index=df.index)
+    return df[column].map(normalize_code) == "1"
+
+
+# Engenharia de atributos
+
+def build_features(df):
+    """
+    Acrescenta as variáveis derivadas ao DataFrame.
+    """
+    out = df.copy()
+
+    # Contagens: violência e meio múltiplos indicam gravidade
+    out["n_violence_types"] = sum(
+        _is_yes(out, c).astype(int) for c in VIOLENCE_TYPES
+    )
+    out["n_aggression_means"] = sum(
+        _is_yes(out, c).astype(int) for c in AGGRESSION_MEANS
+    )
+
+    relations = [c for c in out.columns if c.startswith("REL_")]
+
+    out["family_aggressor"] = sum(
+        _is_yes(out, c).astype(int) for c in FAMILY
+    ) > 0
+    out["household_aggressor"] = sum(
+        _is_yes(out, c).astype(int) for c in HOUSEHOLD
+    ) > 0
+    out["aggressor_identified"] = sum(
+        _is_yes(out, c).astype(int) for c in relations
+    ) > 0
+
+    out["has_disability"] = sum(
+        _is_yes(out, c).astype(int) for c in DISABILITY
+    ) > 0
+
+    out["age_band"] = pd.cut(
+        out["Idade"], bins=AGE_BINS, labels=AGE_LABELS, right=False
+    ).astype(str)
+
+    return out
+
+
+def align_to_model(df, pipeline):
+    """
+    Garante que o DataFrame tem exatamente as colunas que o modelo espera.
+    """
+    expected = list(pipeline.named_steps["prep"].feature_names_in_)
+
+    for column in expected:
+        if column not in df.columns:
+            df[column] = None
+
+    return df[expected]
